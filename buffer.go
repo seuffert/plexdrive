@@ -236,6 +236,15 @@ func (b *Buffer) ReadBytes(start, size int64, preload bool, delay int32) ([]byte
 		return nil, fmt.Errorf("Could not read objects %v API response", b.object.ObjectID)
 	}
 
+	chunkDir := filepath.Dir(filename)
+	if  _, err := os.Stat(chunkDir); os.IsNotExist(err) {
+	    Log.Warningf("chunk temp dir does not exists %v", chunkDir)
+	    if err := os.MkdirAll(chunkDir, 0777); nil != err {
+		Log.Debugf("%v", err)
+		return nil, fmt.Errorf("Could not create chunk temp path for chunk %v", filename)
+	    }
+	}
+
 	if err := ioutil.WriteFile(filename, bytes, 0777); nil != err {
 		Log.Debugf("%v", err)
 		Log.Warningf("Could not write chunk temp file %v", filename)
