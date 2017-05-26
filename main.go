@@ -19,9 +19,11 @@ import (
 	. "github.com/claudetech/loggo/default"
 	flag "github.com/ogier/pflag"
 	"golang.org/x/sys/unix"
+	"github.com/pkg/profile"
 )
 
 func main() {
+	defer profile.Start().Stop()
 	// get the users home dir
 	user, err := user.Current()
 	if nil != err {
