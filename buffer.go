@@ -236,6 +236,13 @@ func (b *Buffer) ReadBytes(start, size int64, preload bool, delay int32) ([]byte
 		return nil, fmt.Errorf("Could not read objects %v API response", b.object.ObjectID)
 	}
 
+	if _, err := os.Stat(b.tempDir); os.IsNotExist(err) {
+		if err := os.MkdirAll(b.tempDir, 0777); nil != err {
+			Log.Debugf("%v", err)
+			return nil, fmt.Errorf("Could not create chunk temp path for chunk %v", filename)
+		}
+	}
+
 	if err := ioutil.WriteFile(filename, bytes, 0777); nil != err {
 		Log.Debugf("%v", err)
 		Log.Warningf("Could not write chunk temp file %v", filename)
@@ -268,6 +275,14 @@ func deleteOldestFile(path string) error {
 	lastMod := time.Now()
 
 	err := filepath.Walk(path, func(file string, info os.FileInfo, err error) error {
+		if err != nil {
+			Log.Errorf("Error during walk through cache directory: %+v", err)
+			return filepath.SkipDir
+		}
+		if info == nil {
+			Log.Errorf("File info for %s was nil", file)
+			return filepath.SkipDir
+		}
 		if !info.IsDir() {
 			modTime := info.ModTime()
 			if modTime.Before(lastMod) {
