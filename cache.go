@@ -17,6 +17,8 @@ import (
 // Cache is the cache
 type Cache struct {
 	db        *gorm.DB
+	tx        *gorm.DB
+	backup    *gorm.DB
 	dbAction  chan cacheAction
 	tokenPath string
 }
@@ -42,7 +44,6 @@ type APIObject struct {
 	LastModified time.Time
 	DownloadURL  string
 	Parents      string `gorm:"index"`
-	CreatedAt    time.Time
 }
 
 // PageToken is the last change id
@@ -54,21 +55,39 @@ type PageToken struct {
 // NewCache creates a new cache instance
 func NewCache(cacheBasePath string, sqlDebug bool) (*Cache, error) {
 	Log.Debugf("Opening cache connection")
-	db, err := gorm.Open("sqlite3", filepath.Join(cacheBasePath, "cache"))
+	db, err := gorm.Open("sqlite3", "file::memory:?cache=shared")
 	if nil != err {
 		Log.Debugf("%v", err)
 		return nil, fmt.Errorf("Could not open cache database")
+	}
+	backupPath := filepath.Join(cacheBasePath, "cache")
+	backupDb, err := gorm.Open("sqlite3", backupPath)
+	if nil != err {
+		Log.Debugf("%v", err)
+		return nil, fmt.Errorf("Could not open cache backup database")
 	}
 
 	Log.Debugf("Migrating cache schema")
 	db.AutoMigrate(&APIObject{})
 	db.AutoMigrate(&PageToken{})
 	db.LogMode(sqlDebug)
+	backupDb.AutoMigrate(&APIObject{})
+	backupDb.AutoMigrate(&PageToken{})
+	backupDb.LogMode(sqlDebug)
 
 	cache := Cache{
 		db:        db,
+		backup:    backupDb,
 		dbAction:  make(chan cacheAction),
 		tokenPath: filepath.Join(cacheBasePath, "token.json"),
+	}
+
+	// Check if backup contains data and copy those data
+	var count int64
+	backupDb.Model(&APIObject{}).Count(&count)
+	if count > 0 {
+		copyDatabase(backupDb, db)
+		Log.Infof("Imported cached data from %v", backupPath)
 	}
 
 	go cache.startStoringQueue()
@@ -83,14 +102,30 @@ func (c *Cache) startStoringQueue() {
 		if nil != action.object {
 			if action.action == DeleteAction || action.action == StoreAction {
 				Log.Debugf("Deleting object %v", action.object.ObjectID)
-				c.db.Delete(action.object)
+				c.tx.Unscoped().Delete(action.object)
 			}
 			if action.action == StoreAction {
 				Log.Debugf("Storing object %v in cache", action.object.ObjectID)
-				c.db.Create(action.object)
+				c.tx.Unscoped().Create(action.object)
 			}
 		}
 	}
+}
+
+// StartTransaction starts a new transaction
+func (c *Cache) StartTransaction() {
+	c.tx = c.db.Begin()
+}
+
+// EndTransaction ends the current transaction
+func (c *Cache) EndTransaction() {
+	c.tx.Commit()
+}
+
+// Backup backups the in memory cache to disk
+func (c *Cache) Backup() {
+	Log.Debugf("Backup cache database")
+	copyDatabase(c.db, c.backup)
 }
 
 // Close closes all handles
@@ -101,6 +136,10 @@ func (c *Cache) Close() error {
 	if err := c.db.Close(); nil != err {
 		Log.Debugf("%v", err)
 		return fmt.Errorf("Could not close cache connection")
+	}
+	if err := c.backup.Close(); nil != err {
+		Log.Debugf("%v", err)
+		return fmt.Errorf("Could not close cache backup connection")
 	}
 
 	return nil
@@ -160,7 +199,7 @@ func (c *Cache) GetObject(id string) (*APIObject, error) {
 
 // GetObjectsByParent get all objects under parent id
 func (c *Cache) GetObjectsByParent(parent string) ([]*APIObject, error) {
-	Log.Debugf("Getting children for %v", parent)
+	Log.Tracef("Getting children for %v", parent)
 
 	var objects []*APIObject
 	c.db.Where("parents LIKE ?", fmt.Sprintf("%%|%v|%%", parent)).Find(&objects)
@@ -212,8 +251,8 @@ func (c *Cache) UpdateObject(object *APIObject) error {
 func (c *Cache) StoreStartPageToken(token string) error {
 	Log.Debugf("Storing page token %v in cache", token)
 
-	c.db.Delete(&PageToken{})
-	c.db.Create(&PageToken{
+	c.tx.Unscoped().Delete(&PageToken{})
+	c.tx.Unscoped().Create(&PageToken{
 		Token: token,
 	})
 
@@ -234,4 +273,26 @@ func (c *Cache) GetStartPageToken() (string, error) {
 	}
 
 	return pageToken.Token, nil
+}
+
+func copyDatabase(src *gorm.DB, dest *gorm.DB) {
+	tx := dest.Begin()
+
+	// delete old data
+	tx.Unscoped().Delete(&PageToken{})
+	tx.Unscoped().Delete(&APIObject{})
+
+	// copy page token
+	var token PageToken
+	src.First(&token)
+	tx.Unscoped().Create(&token)
+
+	// copy objects
+	var objects []*APIObject
+	src.Find(&objects)
+	for _, object := range objects {
+		tx.Unscoped().Create(object)
+	}
+
+	tx.Commit()
 }

@@ -150,7 +150,7 @@ func (b *Buffer) ReadBytes(start, size int64, preload bool, delay int32) ([]byte
 		defer f.Close()
 
 		buf := make([]byte, size)
-		if n, err := f.ReadAt(buf, fOffset); n > 0 && (nil == err || io.EOF == err) {
+		if n, err := f.ReadAt(buf, fOffset); n > 0 && (nil == err || io.EOF == err || io.ErrUnexpectedEOF == err) {
 			Log.Tracef("Found file %s bytes %v - %v in cache", filename, offset, offsetEnd)
 
 			// update the last modified time for files that are often in use
@@ -158,7 +158,8 @@ func (b *Buffer) ReadBytes(start, size int64, preload bool, delay int32) ([]byte
 				Log.Warningf("Could not update last modified time for %v", filename)
 			}
 
-			return buf[:size], nil
+			eOffset := int64(math.Min(float64(size), float64(len(buf))))
+			return buf[:eOffset], nil
 		}
 
 		Log.Debugf("%v", err)
@@ -204,7 +205,9 @@ func (b *Buffer) ReadBytes(start, size int64, preload bool, delay int32) ([]byte
 
 	if res.StatusCode != 206 {
 		if res.StatusCode != 403 {
-			return nil, fmt.Errorf("Wrong status code %v", res)
+			Log.Debugf("Request\n----------\n%v\n----------\n", req)
+			Log.Debugf("Response\n----------\n%v\n----------\n", res)
+			return nil, fmt.Errorf("Wrong status code %v", res.StatusCode)
 		}
 
 		// throttle requests
@@ -275,12 +278,11 @@ func deleteOldestFile(path string) error {
 	lastMod := time.Now()
 
 	err := filepath.Walk(path, func(file string, info os.FileInfo, err error) error {
-		if err != nil {
-			Log.Errorf("Error during walk through cache directory: %+v", err)
+		if nil != err {
+			Log.Tracef("%v", err)
 			return filepath.SkipDir
 		}
-		if info == nil {
-			Log.Errorf("File info for %s was nil", file)
+		if nil == info {
 			return filepath.SkipDir
 		}
 		if !info.IsDir() {

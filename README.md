@@ -1,9 +1,15 @@
 [![Build Status](https://travis-ci.org/dweidenfeld/plexdrive.svg?branch=master)](https://travis-ci.org/dweidenfeld/plexdrive)
 
 # Plexdrive
-Plexdrive allows you to mount your Google Drive account as fuse filesystem.
+Plexdrive allows you to mount your Google Drive account as read-only fuse filesystem.
 
-The project is comparable to projects like [rclone](https://rclone.org/) or [node-gdrive-fuse](https://github.com/thejinx0r/node-gdrive-fuse), but optimized for media streaming e.g. with plex ;)
+The project is comparable to projects like [rclone](https://rclone.org/), 
+[google-drive-ocamlfuse](https://github.com/astrada/google-drive-ocamlfuse) or 
+[node-gdrive-fuse](https://github.com/thejinx0r/node-gdrive-fuse), 
+but optimized for media streaming e.g. with plex ;)
+
+Please note, that plexdrive doesn't currently support writes (adding new files or modifications).
+It only supports reading existing files and deletion. 
 
 I tried using rclone a long time, but got API Quota errors ever day, or more times a day. So I decided to try node-gdrive-fuse. The problem here was, that it missed some of my media files, so I started implementing my own file system library.
 
@@ -40,6 +46,10 @@ Usage of ./plexdrive:
     	Set the mounts GID (-1 = default permissions) (default -1)
   --refresh-interval duration
     	The time to wait till checking for changes (default 5m0s)
+  --root-node-id string
+    	The ID of the root node to mount (use this for only mount a sub directory) (default "root")
+  --speed-limit string
+    	This value limits the download speed, e.g. 5M = 5MB/s per chunk (units: B, K, M, G)
   -t, --temp string
     	Path to a temporary directory to store temporary data (default "/tmp")
   --uid int
@@ -85,6 +95,23 @@ deleted the day after at 18:00 and so on.
 If you activate the option `clear-chunk-max-size` you will automatically disable
 the cache cleaning by time. So it will only delete the oldest chunk file when it 
 needs the space.
+
+**This function does not limit the storage to the given size**. It will only say
+"if you reach the given limit, check if you can clean up old stuff". So if you have
+a limit of e.g. 100gb available for chunks, you should specify the clear-chunk-max-size 
+of at most 60gb to be sure it will not override the 100gb limit. The implementation is 
+done that way, because a hard checking routine could make the playback unstable and 
+present buffering because the cleaning of the old chunks off the file system is a low 
+priority over streaming your files.
+
+
+### Root-Node-ID
+You can use the option `root-node-id` to specify a folder id that should be mounted as
+the root folder. This option will not prevent plexdrive from getting the changes for your
+whole Google Drive structure. It will only "display" another folder as root instead of the
+real root folder.
+Don't expect any performance improvement or something else. This option is only for your
+personal folder structuring.
 
 # Contribute
 If you want to support the project by implementing functions / fixing bugs
